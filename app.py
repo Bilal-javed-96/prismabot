@@ -33,7 +33,7 @@ def configure_retriever():
     llm = ChatOpenAI(temperature=0,model_name="gpt-3.5-turbo-16k")
 
     retriever_from_llm = MultiQueryRetriever.from_llm(
-        retriever=retriever.as_retriever(), llm=llm
+        retriever=retriever, llm=llm
     )
 
     return retriever_from_llm
