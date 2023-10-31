@@ -1,0 +1,8 @@
+langchain==0.0.300
+pinecone-client==2.2.2
+python-dotenv==1.0.0
+openai
+tiktoken
+streamlit==1.26.0
+pinecone-text
+weaviate-client==3.24.2
