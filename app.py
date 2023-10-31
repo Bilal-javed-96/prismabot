@@ -28,12 +28,13 @@ def configure_retriever():
         print("Failed to initialize Pinecone. Check your API key and environment settings.")
         print(f"Error: {str(e)}")
 
-    retriever = Pinecone.from_existing_index(index_name=os.getenv("PINECONE_INDEX_NAME"),embedding=OpenAIEmbeddings,text_key="text")
-
+    # retriever = Pinecone.from_existing_index(index_name=os.getenv("PINECONE_INDEX_NAME"),embedding=OpenAIEmbeddings,text_key="text")
+    embeddings = OpenAIEmbeddings()
+    vectorstore = Pinecone(index = pinecone.Index(os.getenv("PINECONE_INDEX_NAME")), embedding=embeddings.embed_query, text_key="text")
+    
     llm = ChatOpenAI(temperature=0,model_name="gpt-3.5-turbo-16k")
-
     retriever_from_llm = MultiQueryRetriever.from_llm(
-        retriever=retriever, llm=llm
+        retriever=vectorstore.as_retriever(), llm=llm
     )
 
     return retriever_from_llm
