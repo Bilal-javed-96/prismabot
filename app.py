@@ -1,107 +1,136 @@
 import os
+from openai import OpenAI
 import streamlit as st
-from langchain.chat_models import ChatOpenAI
-from langchain.memory import ConversationBufferMemory
-from langchain.memory.chat_message_histories import StreamlitChatMessageHistory
-import pinecone
-from langchain.vectorstores.pinecone import Pinecone
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.callbacks.base import BaseCallbackHandler
-from langchain.chains import ConversationalRetrievalChain
-from langchain.retrievers.multi_query import MultiQueryRetriever
+import time
+from dotenv import load_dotenv
 
-from dotenv import load_dotenv  # For loading environment variables from .env file
-import os
-
-# Load environment variables from .env file
 load_dotenv()
 
+# Initialize Streamlit app
 st.set_page_config(page_title="PrismaDocsBot", page_icon="💡")
 st.title("💡 Prisma Docs Bot")
 
-@st.cache_resource(ttl="1h")
-def configure_retriever():
+# Initialize OpenAI client
+client = OpenAI()
+
+@st.cache_resource
+def create_prisma_cloud_assistant():
     try:
-        # Initialize the Pinecone client with API key and environment
-        pinecone.init(api_key=os.getenv("PINECONE_API_KEY"), environment=os.getenv("PINECONE_ENVIRONMENT"))
+        OpenAI.api_key = os.getenv('OPENAI_API_KEY')
+
+        # Retrieve an existing Assistant
+        my_assistant = client.beta.assistants.retrieve(assistant_id='asst_g5RCLyfQi5o6mHqbdiUrHse8')
+        st.success(f"Assistant retrieved: {my_assistant.name}")
+
+        # Step 1: Create an Assistant
+        # my_assistant = client.beta.assistants.create(
+        #     model="gpt-4-1106-preview",
+        #     instructions="You are a helpful Prisma Cloud Consultant. You have been provided with the prisma cloud docs as a knowledgebase inside the retrieval tool. Always use that to get the most authentic and up-to-date information for it.",
+        #     name="Prisma Cloud Consultant",
+        #     tools=[{"type": "code_interpreter"}, {"type":"retrieval"}],
+        #     file_ids=['file-1l4rQB1l1AiSizuZzvjOfBj6']
+        # )
+
+        # st.write(f"Assistant created: {my_assistant}\n")
+
+        return my_assistant
+
     except Exception as e:
-        print("Failed to initialize Pinecone. Check your API key and environment settings.")
-        print(f"Error: {str(e)}")
+        st.error(f"Error creating assistant: {e}")
+        raise
 
-    # retriever = Pinecone.from_existing_index(index_name=os.getenv("PINECONE_INDEX_NAME"),embedding=OpenAIEmbeddings,text_key="text")
-    embeddings = OpenAIEmbeddings()
-    vectorstore = Pinecone(index = pinecone.Index(os.getenv("PINECONE_INDEX_NAME")), embedding=embeddings.embed_query, text_key="text")
-    
-    llm = ChatOpenAI(temperature=0,model_name="gpt-3.5-turbo-16k")
-    retriever_from_llm = MultiQueryRetriever.from_llm(
-        retriever=vectorstore.as_retriever(), llm=llm
-    )
+def create_thread():
+    try:
+        # Step 2: Create a Thread
+        my_thread = client.beta.threads.create()
+        # st.write(f"Thread created: {my_thread}\n")
 
-    return retriever_from_llm
+        return my_thread
 
+    except Exception as e:
+        st.error(f"Error creating thread: {e}")
+        raise
 
-class StreamHandler(BaseCallbackHandler):
-    def __init__(self, container: st.delta_generator.DeltaGenerator, initial_text: str = ""):
-        self.container = container
-        self.text = initial_text
-        self.run_id_ignore_token = None
+def add_user_message_to_thread(thread_id, content):
+    try:
+        # Step 3: Add a Message to a Thread
+        my_thread_message = client.beta.threads.messages.create(
+            thread_id=thread_id,
+            role="user",
+            content=content,
+        )
+        # st.write(f"User message added to thread: {my_thread_message}\n")
 
-    def on_llm_start(self, serialized: dict, prompts: list, **kwargs):
-        # Workaround to prevent showing the rephrased question as output
-        if prompts[0].startswith("Human"):
-            self.run_id_ignore_token = kwargs.get("run_id")
+        return my_thread_message
 
-    def on_llm_new_token(self, token: str, **kwargs) -> None:
-        if self.run_id_ignore_token == kwargs.get("run_id", False):
-            return
-        self.text += token
-        self.container.markdown(self.text)
+    except Exception as e:
+        # st.error(f"Error adding user message to thread: {e}")
+        raise
 
+def run_assistant(thread_id, assistant_id, user_question):
+    try:
+        # Step 4: Run the Assistant
+        my_run = client.beta.threads.runs.create(
+            thread_id=thread_id,
+            assistant_id=assistant_id,
+            # instructions=f"Please address the user as Rok Benko. User question: {user_question}"
+        )
+        # st.write(f"Assistant run started: {my_run}\n")
 
-class PrintRetrievalHandler(BaseCallbackHandler):
-    def __init__(self, container):
-        self.status = container.status("**Context Retrieval**")
+        return my_run
 
-    def on_retriever_start(self, serialized: dict, query: str, **kwargs):
-        self.status.write(f"**Question:** {query}")
-        self.status.update(label=f"**Context Retrieval:** {query}")
+    except Exception as e:
+        st.error(f"Error running assistant: {e}")
+        raise
 
-    def on_retriever_end(self, documents, **kwargs):
-        for idx, doc in enumerate(documents):
-            # source = os.path.basename(doc.metadata["path"])
-            self.status.write(f"**Document: {idx}**")
-            self.status.markdown(doc.page_content)
-        self.status.update(state="complete")
+def retrieve_run_status(thread_id, run_id):
+    try:
+        # Step 5: Periodically retrieve the Run to check on its status to see if it has moved to completed
+        while True:
+            keep_retrieving_run = client.beta.threads.runs.retrieve(
+                thread_id=thread_id,
+                run_id=run_id
+            )
+            # st.write(f"Run status: {keep_retrieving_run.status}")
 
+            if keep_retrieving_run.status == "completed":
+                st.write("\n")
+                break
+            time.sleep(1)
 
-retriever = configure_retriever()
+    except Exception as e:
+        st.error(f"Error retrieving run status: {e}")
+        raise
 
-# Setup memory for contextual conversation
-msgs = StreamlitChatMessageHistory()
-memory = ConversationBufferMemory(memory_key="chat_history", chat_memory=msgs, return_messages=True, input_key='question', output_key='answer')
-# memory = ConversationSummaryBufferMemory(llm=llm, input_key='question', output_key='answer')
-# Setup LLM and QA chain
-llm = ChatOpenAI(
-    model_name="gpt-4", temperature=0, streaming=True
-)
+def retrieve_messages(thread_id):
+    try:
+        # Step 6: Retrieve the Messages added by the Assistant to the Thread
+        all_messages = client.beta.threads.messages.list(
+            thread_id=thread_id
+        )
 
-qa_chain = ConversationalRetrievalChain.from_llm(
-    llm, retriever=retriever, memory=memory, verbose=True,return_source_documents=True
-)
+        st.write("------------------------------------------------------------\n")
 
-if len(msgs.messages) == 0 or st.sidebar.button("Clear message history"):
-    msgs.clear()
-    msgs.add_ai_message("How can I help you?")
+        st.markdown(f"User: {all_messages.data[-1].content[0].text.value}")
+        st.markdown(f"Assistant: {all_messages.data[-2].content[0].text.value}")
 
-avatars = {"human": "user", "ai": "assistant"}
-for msg in msgs.messages:
-    st.chat_message(avatars[msg.type]).write(msg.content)
+    except Exception as e:
+        st.error(f"Error retrieving messages: {e}")
+        raise
 
-if user_query := st.chat_input(placeholder="Ask me anything!"):
-    st.chat_message("user").write(user_query)
+if __name__ == "__main__":
+    try:
+        my_assistant = create_prisma_cloud_assistant()
+        my_thread = create_thread()
 
-    with st.chat_message("assistant"):
-        retrieval_handler = PrintRetrievalHandler(st.container())
-        stream_handler = StreamHandler(st.empty())
-        response = qa_chain(user_query, callbacks=[retrieval_handler, stream_handler])
-        # st.error(response)
+        # Get user question
+        user_question = st.text_input("Ask a question to the Prisma Docs Bot:")
+
+        if st.button("Ask") and user_question:
+            my_thread_message = add_user_message_to_thread(my_thread.id, user_question)
+            my_run = run_assistant(my_thread.id, my_assistant.id, user_question)
+            retrieve_run_status(my_thread.id, my_run.id)
+            retrieve_messages(my_thread.id)
+
+    except Exception as e:
+        st.error(f"Error: {e}")
